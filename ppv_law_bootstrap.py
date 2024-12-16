@@ -1,21 +1,20 @@
-# -*- coding: utf-8 -*-
 """
-Aplicación del método de bootstrap a la determinación de la recta(curva) de 
-seguridad de la ley de propagación de vibraciones en el terreno definido un 
-nivel de confianza (nc) dado (naturalmente, se puede extender su uso a otras
-aplicaciones).
+Aplicación del método de bootstrap a la determinación de las curvas de 
+seguridad (intervalo de predicción e intervalo de tolerancia) de la ley de 
+propagación de vibraciones en el terreno (PPV vs SD) definido un nivel de 
+confianza (nc) y una cobertura.
 
-Se espera que se haya definido previamente el modelo de distancia escalada
-(s_d: Distancia/Carga^beta). Como ejemplo, y típicamente para cargas alargadas:
+Se espera que se haya establecido previamente el modelo de distancia escalada
+(sd: Distancia/Carga^beta). Como ejemplo, y típicamente para cargas alargadas:
 beta = 1/2, y para cargas esféricas: beta = 1/3.
 
 En el fichero de entrada los valores x son los logaritmos decimales de
-las distancias escaladas (log10(s_d)); los valores y son, consecuentemente,
-los log10(ppv):
-x	y
-1.76779	0.2001
-0.69139	1.96096
-1.55308	1.06786
+las distancias escaladas (log10(SD)) y los valores y son los log10(PPV):
+x    y
+1.76779    0.2001
+0.69139    1.96096
+1.55308    1.06786
+..............
 ..............
 
 También está implementado el modelo lognormal para comparar resultados.
@@ -25,234 +24,382 @@ Utilidad con fines docentes
 Universidad de Vigo
 """
 
-# se importan los módulos requeridos
+# Import required libraries
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as st
+import scipy.special as sp
 
-# definición de parámetros globales: fichero de datos, número de replicaciones
-# en el bootstrap, nivel de confianza y número de puntos en el que se 
-# discretizará el rango de x (log(sd)) para obtener los resultados.
-# el fichero "data_simul.txt" contiene datos simulados de un modelo lognormal
-# para comparar los resultados obtenidos con ámbos métodos
 
-filename = "data_simul.txt" # fichero de datos x y -> log(sd) log(ppv)
-n_rep=10000 # número de replicaciones del bootstrap
-nc = 0.95   # nivel de confianza deseado
-n_points = 10 # número de puntos en el rango de log(sd)
+def get_values(filename, number=1000):
+    """
+    Reads data from a CSV file and returns the first 'number' values for 
+    columns 'x' and 'y'.
+    
+    Parameters
+    ----------
+    filename : str
+        The path to the CSV file containing the data.
+    number : int, optional
+        The number of data points to return (default is 1000: all).
+    
+    Returns
+    -------
+    x : pandas.Series
+        The first 'number' values of the 'x' colum: log10(SD)
+    y : pandas.Series
+        The first 'number' values of the 'y' column: log10(PPV)
+    """
+    df = pd.read_csv(filename, sep=r"\s+")
+    if (len(df.index) < number) or (number == 0):
+        number = len(df.index)
+    x = df['x'][:number]
+    y = df['y'][:number]
+    
+    return x, y
 
-def normal_regression(x, y, x_grid, nc=nc):
-    # antes de comenzar con el boostrap se aplica el modelo log-normal a los 
-    # datos de partida (sd, ppv) para comparar posteriormente los resultados de
-    # aplicar ambos métodos.
-    # x e y representan los log10 de sd y de ppv, respectivamente, por lo que
-    # se utiliza regresión lineal
-   
-    # regresión lineal, la predicción y los residuos correspondientes a los 
-    # datos de partida
+def normal_regression(filename, n_points, nc=0.90, cobertura=0.95, plot_=0):
+    """
+    Performs normal regression on data from a file and calculates prediction
+    intervals.
+    
+    Parameters
+    ----------
+    filename : str
+        Path to the input data file.
+    n_points : int
+        The number of points to discretize the range of the x-axis for 
+        predictions.
+    nc : float, optional
+        Confidence level for prediction intervals (default is 0.90).
+    cobertura : float, optional
+        Coverage for tolerance intervals (default is 0.95).
+    plot_ : int, optional
+        Flag to indicate whether to plot the results (default is 0, which means
+                                                      do not plot).
+    
+    Returns
+    -------
+    x : pandas.Series
+        The 'x' values used in the regression.
+    y : pandas.Series
+        The 'y' values used in the regression.
+    slope : float
+        The slope of the regression line.
+    intercept : float
+        The intercept of the regression line.
+    rss_y : pandas.Series
+        The residuals of the regression.
+    df_intervals : pandas.DataFrame
+        DataFrame containing the predicted regression values and 
+        confidence/tolerance intervals.
+    """
+
+    x, y = get_values(filename)
+
+    # Perform linear regression
     slope, intercept = np.polyfit(x, y, deg=1)
     y_predict = intercept + slope*x
     rss_y = y - y_predict
     n = len(rss_y)
     mse = np.sqrt(np.square(rss_y).sum()/(n-2))
 
-    # cálculos intermedios para obtener el error total en cada punto
+    # Variables for confidence intervals
     x_mean = np.mean(x)
     x_gap = x-x_mean
     ss = np.square(x_gap).sum()
     
-    # cálculo del error total (en los puntos x_grid)
-    se_x_grid = np.sqrt(1 + 1/n + np.square((x_grid - x_mean))/ss)* \
-                mse*st.t.ppf(nc, df = n-2)
-    
-    # cálculo de predicción en x_grid con nivel de confianza nc
-    y_pred_nc = intercept + slope*x_grid + se_x_grid
-
-    return slope, intercept, rss_y, y_pred_nc
-
-def bootstrap_regression(x, y, n_rep=n_rep):
-    """realiza el bootstrap de los datos utilizando n_rep repeticiones y la 
-    regresion lineal de cada bootstrap. Los datos de entrada (x, y) están 
-    en escala logarítmica:(log10(sd), log10(ppv)).
-    
-    Esta función es llamada por la función: generar_bootstrap()
-    """
-    # se crean los índices para la selección aleatoria
-    indx = np.arange(len(x))
-
-    # tuplas donde se guardarán los resultados de las regresiones
-    bs_slope = np.empty(n_rep)
-    bs_intercept = np.empty(n_rep)
-
-    # generación de muestras aleatorias y su regresión lineal
-    for i in range(n_rep):
-        bs_indx = np.random.choice(indx, size=len(indx))
-        bs_x, bs_y = x[bs_indx], y[bs_indx]
-        bs_slope[i], bs_intercept[i] = np.polyfit(bs_x, bs_y, deg=1)
-
-    return bs_slope, bs_intercept
-    
-def generar_bootstrap(filename, n_rep=n_rep, n_points=n_points, draw_plot=1):
-    '''
-    Lee los datos de entrada y llama a la función bootstrap_regression()
-    
-    Parameters
-    ----------
-    filename : fichero de texto
-        DESCRIPTION.
-        Fichero de texto con encabezado: x y
-        x es el log10(sd)
-        y es el log10(ppv)
-    n_rep : int
-        DESCRIPTION.
-        número de repeticiones del bootstrap
-    n_points : int
-        DESCRIPTION.
-        Número de puntos en los que se va discretizar el rango del eje x
-    draw_plot: int
-        DESCRIPTION.
-        Poner valor igual a 1 para dibujar resultados
-
-    Returns
-    -------
-    bs_slope : Array of float64
-        DESCRIPTION.
-        Pendiente de la regresión de cada muestra
-    bs_intercept : Array of float64
-        DESCRIPTION.
-        Ordenada en el origen de la regresión de cada muestra
-    e_bs : Dataframe
-        DESCRIPTION.
-        Residuos de cada regresión (n_rep) en cada punto (x_grid)    
-    slope, intercept, rss_y
-        DESCRIPTION.
-        Los valores equivalentes obtenidos con la muestra original
-    '''
-    # lectura de datos
-    df = pd.read_csv(filename, sep="\s+")
-    x = df['x']
-    y = df['y']
-    
-    # se genera el x_grid
+    # Generate the x_grid for predictions
     x_grid = np.linspace(np.min(x), np.max(x), n_points)
     
-    # # cálculo de predicción en x_grid con nivel de confianza nc  
-    slope, intercept, rss_y, y_pred_nc = normal_regression(x, y, x_grid, nc=nc)
+    # Calculate standard error for the confidence intervals
+    se_x_grid = np.sqrt(1 + 1/n + np.square((x_grid - x_mean))/ss) * \
+        mse*st.t.ppf(nc, df=n-2)
+
+    # Predict the regression values for the x_grid and add confidence intervals
+    y_pred_x_grid = intercept + slope*x_grid
+    y_pred_x_grid_nc = y_pred_x_grid + se_x_grid
+
+    # Calculate tolerance intervals for the x_grid
+    _x_tol_grid = np.sqrt(1 / n + np.square((x_grid - x_mean)) / ss)
+    zp_d_grid = st.norm.ppf(cobertura) / _x_tol_grid
+    se_x_tol_grid = sp.nctdtrit(
+        n - 2, zp_d_grid, nc, out=None) * mse * _x_tol_grid
+    y_tol_x_grid_nc = intercept + slope*x_grid + se_x_tol_grid
     
-    # genera el bootstrap y las regresiones correspondientes
-    bs_slope, bs_intercept = bootstrap_regression(x, y, n_rep)
+    # Store the results in a DataFrame
+    df_intervals = pd.DataFrame()
+    df_intervals['x_grid'] = x_grid
+    df_intervals['y_pred_regr'] = y_pred_x_grid
+    df_intervals['y_pred_regr_nc'] = y_pred_x_grid_nc
+    df_intervals['y_tol_regr_c_nc'] = y_tol_x_grid_nc
     
+    # Optionally plot the results
+    if plot_==1:
+        plot_interv(x, y, df_intervals)
+
+    return x, y, slope, intercept, rss_y, df_intervals
+
+
+def bootstrap_regression(filename, n_rep=1000, draw_plot=1):
+    """
+    Performs bootstrap sampling to generate multiple regression lines and 
+    calculates residuals for each sample.
+
+    Parameters:
+    ----------
+    filename : str
+        The path to the input data file containing 'x' and 'y' columns.
+    n_rep : int, optional
+        Number of bootstrap repetitions (default is 1000).
+    draw_plot : int, optional
+        Set to 1 to plot the bootstrap results, 0 otherwise (default is 0).
+
+    Returns:
+    -------
+    bs_slope : np.ndarray
+        The slopes of the regression lines for each bootstrap sample.
+    bs_intercept : np.ndarray
+        The intercepts of the regression lines for each bootstrap sample.
+    bs_residuals : np.ndarray
+        The residuals for each bootstrap sample.
+    """
+    x, y = get_values(filename)
+    n = int(len(x))
+    
+    # Generate bootstrap samples and calculate regression parameters
+    indx = np.arange(n)
+    bs_slope = np.empty(n_rep)
+    bs_intercept = np.empty(n_rep)
+    bs_x = np.empty((n, n_rep))
+    bs_y = np.empty((n, n_rep))
+    bs_rss_y = np.empty((n, n_rep))
+
+    for i in range(n_rep):
+        bs_indx = np.random.choice(indx, size=len(indx), replace=True)
+        bs_x[:, i], bs_y[:, i] = x[bs_indx], y[bs_indx]
+        bs_slope[i], bs_intercept[i] = np.polyfit(
+            bs_x[:, i], bs_y[:, i], deg=1)
+        bs_rss_y[:, i] = y - bs_slope[i]*x - bs_intercept[i]
+    
+    # Plot results if specified
     if draw_plot == 1:
         plot_bootstrap(x, y, bs_slope, bs_intercept)
+
+    return bs_slope, bs_intercept, bs_rss_y, bs_x
+
+
+def deviat_regr_bs(x, slope, intercept, bs_slope, bs_intercept):
+    """
+    Calculates the deviations of the bootstrap regression lines from the 
+    original regression.
     
-    # calcula los valores medios del bs y las desviaciones de cada regresión 
-    # con respecto a ellos
+    Parameters:
+    ----------
+    x : np.ndarray
+        The x values (log10 of sd).
+    slope : float
+        The slope of the original regression line.
+    intercept : float
+        The intercept of the original regression line.
+    bs_slope : np.ndarray
+        The slopes of the regression lines for each bootstrap sample.
+    bs_intercept : np.ndarray
+        The intercepts of the regression lines for each bootstrap sample.
+    
+    Returns:
+    -------
+    np.ndarray
+        Deviations of the bootstrap regression lines from the original 
+        regression.
+    """
+    # mean regression parameters
     bs_slope_mean = np.mean(bs_slope)
     bs_intercept_mean = np.mean(bs_intercept)
-    
     bs_slope_diff = bs_slope_mean - bs_slope
     bs_intercept_diff = bs_intercept_mean - bs_intercept
-    
-    # desviación de la media del bs con respecto a los datos originales
-    bias_intercept_diff = np.array(intercept - bs_intercept_mean)
-    bias_slope_diff = np.array(slope - bs_slope_mean)
-    
-    # calcula los residuos de cada regresión con respecto a la media obtenida 
-    # de los bootstrap en los puntos x_grid
-    e_bs = pd.DataFrame()
-    e_bs_bias = pd.DataFrame()
-    
-    for i in range(len(x_grid)):
-        e_bs[i] = bs_intercept_diff + bs_slope_diff * x_grid[i]
-    
-    # comentar para no ajustar el sesgo del bootstrap
-    # sesgo de la media del boostrap con respecto a la regresión
-    e_bs_bias = (bias_intercept_diff + bias_slope_diff * x_grid)[np.newaxis]
-    e_bs += e_bs_bias
-    
-    # se calcula la convolución de los errores mediante MonteCarlo
-    se_x_grid_bs = generar_simul_convol(rss_y.values, e_bs.values, nc=nc)
-    
-    # se obtiene el valor predicho para el nc deseado
-    y_predict = intercept + slope*x_grid
-    y_pred_nc_bs = y_predict + se_x_grid_bs
-    
-    if draw_plot == 1:
-        plot_results(x, y, x_grid, y_predict, y_pred_nc, y_pred_nc_bs)
-    
-    return y_pred_nc, y_pred_nc_bs
 
-def generar_simul_convol(rss_y, e_bs, nc=nc, n_conv=200000):
-    '''
-    genera la convolución de los errores estimados (ruido:rss_y y modelo:e_bs)
-    aplicando la simulación de montecarlo.
-    a continuación se obtiene el error correspondiente al nivel de confianza
-    deseado
-    '''
-    # generación de indices aleatorios, los errores corresponndientes y su suma
-    idx_ryy = np.random.choice(len(rss_y), size=n_conv)
-    idx_bs= np.random.choice(len(e_bs), size=n_conv)
-    sim_err = rss_y[idx_ryy]
-    sim_err = np.transpose(sim_err[np.newaxis])
-    sim_bs = e_bs[idx_bs]
-    error =  sim_bs + sim_err
-    # determinación del error corresondiente al percentil/nc deseado
-    se_x_grid_bs = np.percentile(error, nc*100, axis=0)
+    # Calculate differences from the original regression parameters
+    bias_intercept_diff = np.array(intercept - bs_intercept_mean)
+    bias_slope_diff = np.array(slope - bs_slope_mean)                          
+    e_bs_x = bs_intercept_diff[:,np.newaxis] + bs_slope_diff[:,np.newaxis] * x
     
-    return se_x_grid_bs
+    # Calculate bias from the original regression
+    e_bs_bias = (bias_intercept_diff + bias_slope_diff * x)[np.newaxis]
+    
+    e_bs_x += e_bs_bias
+    
+    return e_bs_x.T
+
+
+def convol(rss_y, bs_e, nc=0.90, cobertura=0.95):
+    """
+    Generates the convolution of the errors (residuals and bootstrap deviation) 
+    to calculate prediction and tolerance intervals.
+
+    Parameters:
+    ----------
+    rss_y : np.ndarray
+        The residuals of the regression.
+    bs_e : np.ndarray
+        The bootstrap regression deviations.
+    nc : float, optional
+        Confidence level for the prediction interval (default is 0.90).
+    cobertura : float, optional
+        Coverage level for the tolerance interval (default is 0.95).
+
+    Returns:
+    -------
+    se_x_bs_tol : np.ndarray
+        The standard error for the tolerance interval.
+    se_x_bs_pred : np.ndarray
+        The standard error for the prediction interval.
+    """
+    # Convolution residuals + deviations
+    desv = []
+    [desv.append(np.add.outer(bs_e[i], rss_y)) for i in range(len(bs_e))]
+    
+    # nc deviation for prediction interval
+    se_x_bs_pred = [np.percentile(desv[i], nc*100) for i in range(len(desv))]
+    
+    # c_nc deviation for tolerance interval
+    desv_c=[]
+    for item in desv:
+        flat_item=[x for xs in item for x in xs]
+        desv_c.append(np.percentile(np.random.choice(flat_item, 
+                                                     size=(100, 100)),
+                                                     q=cobertura*100,
+                                                     axis=0))
+        se_x_bs_tol = [np.percentile(desv_c[i], nc*100) for i in range(len(desv_c))]
+        
+    return se_x_bs_tol, se_x_bs_pred
+
 
 def plot_bootstrap(x, y, bs_slope, bs_intercept):
-    '''
-    dibujo de las rectas obtenidas del bootstrap a partir de los puntos (x, y)
-    '''
-    # límites del eje x
-    min_x, max_x = np.min(x), np.max(x)
-    
-    # datos de entrada
-    plt.figure(0)
-    plt.plot(x, y, marker='.', linestyle='none')
+    """
+    Plots the results of the bootstrap regression lines.
 
-    # etiquetas de los ejes
-    plt.xlabel('sd')
-    plt.ylabel('ppv')
+    Parameters:
+    ----------
+    x : np.ndarray
+        The x values (log10 of sd).
+    y : np.ndarray
+        The y values (log10 of ppv).
+    bs_slope : np.ndarray
+        The slopes of the regression lines for each bootstrap sample.
+    bs_intercept : np.ndarray
+        The intercepts of the regression lines for each bootstrap sample.
+    """
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, y, marker='.', linestyle='none')
+    plt.xlabel('log10(sd)')
+    plt.ylabel('log10(ppv)')
     plt.margins(0.05)
+    x = np.array([np.min(x), np.max(x)])
     
-    # se añade el intervalo del eje x
-    x = np.array([(min_x), (max_x)])
-        # se dibujan las rectas hasta un máximo de un millar
-    
+    # se dibujan las rectas hasta un máximo de un millar
     for i in np.arange(len(bs_slope)):
         plt.plot(x,
-                   bs_slope[i] * x + bs_intercept[i],
-                   linewidth=0.5, alpha=0.25, color='blue')
+                 bs_slope[i] * x + bs_intercept[i],
+                 linewidth=0.5, alpha=0.25, color='blue')
+    plt.show()
 
-def plot_results(x, y, x_grid, y_predict, y_pred_nc, y_pred_nc_bs):
-    '''
-    y_predict: valores predichos (mediana)
-    y_pred_nc: valores predichos con nc en el modelo lognormal
-    y_pred_nc_bs: valores predichos con nc empleando bootstrap
-    '''
-    # gráfico de resultados
-    plt.figure(10)
-    _ = plt.plot(x, y, marker='.', linestyle='none', label='data')
-    plt.plot(x_grid, y_predict, linestyle='solid', label='regression')
-    plt.plot(x_grid, y_pred_nc, linestyle='dashed', label='nc_lognormal')
-    plt.plot(x_grid, y_pred_nc_bs, linestyle='solid', label='nc_bootstrap')
-    plt.legend()
-    # Label axes
-    _ = plt.xlabel('log(sd)')
-    _ = plt.ylabel('log(ppv)')
-    plt.legend()
-    plt.margins(0.05)
+
+def plot_interv(x, y, df_interv):
+    """
+   Plots the data points along with the prediction and tolerance intervals.
+
+   Parameters:
+   ----------
+   x : np.ndarray
+       The x values (log10 of sd).
+   y : np.ndarray
+       The y values (log10 of ppv).
+   df_interv : pd.DataFrame
+       DataFrame containing the prediction and tolerance intervals.
+   """
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, y, marker='.', linestyle='none', label='data')
+    # Iterar por las columnas 'y' (todas las columnas excepto 'x')
+    for column in df_interv.columns:
+        if column != 'x_grid':
+            plt.plot(df_interv['x_grid'], df_interv[column], label=column)
+
+    plt.xlabel('log10(sd)')
+    plt.ylabel('log10(PPV)')
+    plt.title('Intervalos obtenidos con regresión (log)normal')
+    plt.legend(title="Leyenda")
+
+def generar_bootstrap(filename, n_rep=1000, n_points=20,
+                      nc=0.90, cobertura=0.95, draw_plot=1):
+    """
+    Generates bootstrap samples, performs regression, and calculates prediction 
+    and tolerance intervals for a given dataset.
+
+    Parameters:
+    ----------
+    filename : str
+        The path to the input data file containing 'x' and 'y' columns.
+    n_rep : int, optional
+        Number of bootstrap repetitions (default is 1000).
+    n_points : int, optional
+        Number of points for discretization (default is 20).
+    nc : float, optional
+        Confidence level for prediction intervals (default is 0.90).
+    cobertura : float, optional
+        Coverage level for tolerance intervals (default is 0.95).
+    draw_plot : int, optional
+        Set to 1 to plot the results, 0 otherwise (default is 1).
+
+    Returns:
+    -------
+    df_interv : pd.DataFrame
+        DataFrame containing the prediction and tolerance intervals.
+    """
+
+    x, y, slope, intercept, rss_y, df_interv = normal_regression(filename,
+                                                                 n_points,
+                                                                 nc,
+                                                                 cobertura)
+
+    bs_slope, bs_intercept, bs_rss_y, bs_x = bootstrap_regression(filename,
+                                                                  n_rep)
+
+    x_grid = np.linspace(np.min(x), np.max(x), n_points)
+
+    e_bs_x = deviat_regr_bs(x_grid, slope, intercept,
+                                 bs_slope, bs_intercept)
+    se_x_bs_tol, se_x_bs_pred = convol(rss_y.values, e_bs_x, nc=nc,
+                                       cobertura=cobertura)
     
-# log_ppv_normal,log_ppv_bootstrap = generar_bootstrap(filename)
-log_ppv_normal,log_ppv_bootstrap = generar_bootstrap(
-                                                     filename,
-                                                     n_points = n_points,
-                                                     draw_plot=1
-                                                     )
-            
-# ratio entre las ppv´s calculadas por ambos modelos 
-print(' el ratio entre las ppv´s (normal/bootstraap) en x_grid es:')
-print (10**log_ppv_normal/10**log_ppv_bootstrap)
+    y_predict_x = intercept + slope*x_grid
+    y_pred_nc_bs = y_predict_x + se_x_bs_pred
+    y_tol_c_nc_bs = y_predict_x + se_x_bs_tol
+   
+    df_interv['y_pred_nc_bs'] = y_pred_nc_bs
+    df_interv['y_tol_c_nc_bs'] = y_tol_c_nc_bs
+    
+    if draw_plot==1:
+        plot_interv(x, y, df_interv)
+        
+    return df_interv, rss_y, e_bs_x
+
+
+if __name__ == "__main__":
+
+    filename = "data_simul.txt"
+    n_rep = 1000
+    nc = 0.90
+    cobertura = 0.95
+    n_points = 20
+    draw_plot = 1
+    
+    df_results, rss_y, e_bs_x = generar_bootstrap(
+        filename,
+        n_rep=n_rep,
+        n_points=n_points,
+        nc=nc,
+        cobertura=cobertura,
+        draw_plot=1
+    )
