@@ -298,7 +298,6 @@ def plot_bootstrap(x, y, bs_slope, bs_intercept):
     plt.margins(0.05)
     x = np.array([np.min(x), np.max(x)])
     
-    # se dibujan las rectas hasta un máximo de un millar
     for i in np.arange(len(bs_slope)):
         plt.plot(x,
                  bs_slope[i] * x + bs_intercept[i],
@@ -321,14 +320,14 @@ def plot_interv(x, y, df_interv):
    """
     plt.figure(figsize=(10, 6))
     plt.plot(x, y, marker='.', linestyle='none', label='data')
-    # Iterar por las columnas 'y' (todas las columnas excepto 'x')
+
     for column in df_interv.columns:
         if column != 'x_grid':
             plt.plot(df_interv['x_grid'], df_interv[column], label=column)
 
     plt.xlabel('log10(sd)')
     plt.ylabel('log10(PPV)')
-    plt.title('Intervalos obtenidos con regresión (log)normal')
+    plt.title('Prediction and tolerance intervals (regression lognormal/bootstrap)')
     plt.legend(title="Leyenda")
 
 def generar_bootstrap(filename, n_rep=1000, n_points=20,
