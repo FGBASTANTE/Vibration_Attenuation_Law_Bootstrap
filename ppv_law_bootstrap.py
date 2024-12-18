@@ -52,7 +52,7 @@ def get_values(filename, number=1000):
         The first 'number' values of the 'y' column: log10(PPV)
     """
     df = pd.read_csv(filename, sep=r"\s+")
-    if (len(df.index) < number) or (number == 0):
+    if (len(df.index) < number) or (number == 1000):
         number = len(df.index)
     x = df['x'][:number]
     y = df['y'][:number]
