@@ -16,4 +16,5 @@ x	y\
 
 También está implementado el modelo lognormal para comparar resultados.
 
-![image](https://github.com/user-attachments/assets/c6943da7-a04c-4f75-8abc-56a9dd7433ad)
+![image](https://github.com/user-attachments/assets/4d34222b-bc32-41ae-8e27-6d91cdb5a268)
+
