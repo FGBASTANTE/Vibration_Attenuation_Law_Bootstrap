@@ -268,10 +268,10 @@ def convol(rss_y, bs_e, nc=0.90, cobertura=0.95):
     for item in desv:
         flat_item=[x for xs in item for x in xs]
         desv_c.append(np.percentile(np.random.choice(flat_item, 
-                                                     size=(100, 100)),
+                                                     size=(len(rss_y), len(bs_e))),
                                                      q=cobertura*100,
-                                                     axis=0))
-        se_x_bs_tol = [np.percentile(desv_c[i], nc*100) for i in range(len(desv_c))]
+                                                     axis=1))
+    se_x_bs_tol = [np.percentile(desv_c[i], nc*100) for i in range(len(desv_c))]
         
     return se_x_bs_tol, se_x_bs_pred
 
@@ -392,7 +392,7 @@ if __name__ == "__main__":
     n_rep = 1000
     nc = 0.90
     cobertura = 0.95
-    n_points = 20
+    n_points = 25
     draw_plot = 1
     
     df_results, rss_y, e_bs_x = generar_bootstrap(
