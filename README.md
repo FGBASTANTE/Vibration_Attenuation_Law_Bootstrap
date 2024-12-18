@@ -16,4 +16,4 @@ x	y\
 
 También está implementado el modelo lognormal para comparar resultados.
 
-![ppv_bootstrap](https://github.com/FGBASTANTE/Vibration_Attenuation_Law_Bootstrap/assets/52360383/cc155142-5749-4f92-9647-708b471a6238)
+![image](https://github.com/user-attachments/assets/c6943da7-a04c-4f75-8abc-56a9dd7433ad)
