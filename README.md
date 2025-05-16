@@ -1,6 +1,6 @@
 # Vibration_Attenuation_Law_Bootstrap
 Aplicación del método de bootstrap a la determinación de la recta(curva) de 
-seguridad de la ley de propagación de vibraciones en el terreno
+seguridad de la ley de propagación de vibraciones en el terreno.
 Se espera que se haya definido previamente el modelo de distancia escalada
 (s_d: Distancia/Carga^beta). Como ejemplo, y típicamente para cargas alargadas:
 beta = 1/2, y para cargas esféricas: beta = 1/3.
